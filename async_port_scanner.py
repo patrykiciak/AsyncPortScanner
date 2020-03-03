@@ -7,7 +7,7 @@ import re
 
 class PortScanner:
 
-    def __init__(self, connection_timeout=10, queue_size=15000):
+    def __init__(self, connection_timeout=10, queue_size=0):
         self.connection_timeout = connection_timeout
         self.queue_size = queue_size
 
@@ -35,13 +35,16 @@ class PortScanner:
                 targets.put_nowait((host, port))
         return targets, scan_result
 
-    @staticmethod
-    async def do_port_tasks(port_tasks, scan_result):
+    async def do_port_tasks(self, port_tasks, scan_result):
         while port_tasks.qsize():
             task = await port_tasks.get()
             ip, port, state = await task
+            if type(state) is OSError and state.args[0] == 10055:
+                port_tasks.put_nowait(asyncio.create_task(self.check_port(ip, port)))
+                return False
             scan_result[ip].append((port, state))
             port_tasks.task_done()
+        return True
 
     async def check_port(self, ip, port):
         s = None
@@ -61,15 +64,17 @@ class PortScanner:
         finally:
             s.close()
 
-    async def scan_many(self, targets: asyncio.Queue, scan_result):  # a queue with tuples of ip and ports
+    async def scan_many(self, targets: asyncio.Queue, scan_result):
         port_tasks = asyncio.Queue(self.queue_size)
+        is_able = True
         while targets.qsize():
-            await port_tasks.put(asyncio.create_task(self.check_port(*await targets.get())))
-            targets.task_done()
-            if port_tasks.full():
-                await self.do_port_tasks(port_tasks, scan_result)
-        while port_tasks.qsize():
-            await self.do_port_tasks(port_tasks, scan_result)
+            while is_able and targets.qsize():
+                await port_tasks.put(asyncio.create_task(self.check_port(*await targets.get())))
+                targets.task_done()
+                if port_tasks.full():
+                    is_able = await self.do_port_tasks(port_tasks, scan_result)
+            while port_tasks.qsize():
+                is_able = await self.do_port_tasks(port_tasks, scan_result)
         return scan_result
 
     def start_scan(self, input_targets: dict):
@@ -130,8 +135,6 @@ class PortScanner:
 
         print('Number of scanned ports:', scanned_number)
         print('Number of open ports:', open_number)
-        print(scan_result)
-        print(len(scan_result['127.0.0.1']))
 
 
 PortScanner().main()
