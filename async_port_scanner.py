@@ -52,7 +52,6 @@ class PortScanner:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(self.connection_timeout)
             await asyncio.get_event_loop().sock_connect(s, (ip, port))
-            s.close()
             print(ip, port, 'ok')
             return ip, port, 'ok'
         except (PermissionError, ConnectionRefusedError) as e:
